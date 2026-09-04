@@ -1,0 +1,36 @@
+name: cx-assist
+services:
+  - type: web
+    name: cx-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_MODEL
+        value: gemini-2.5-flash
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: REDIS_URL
+        fromDatabase:
+          name: cx-redis
+          property: connectionString
+    healthCheckPath: /api/health
+
+  - type: postgresqul
+    name: cx-db
+    plan: free
+    databaseName: cxassist
+    user: cx
+
+  - type: redis
+    name: cx-redis
+    plan: free
+    ipAllowList: []

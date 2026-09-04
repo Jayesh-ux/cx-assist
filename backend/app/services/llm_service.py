@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.logging import logger
 
 OMNIPATH_URL = "https://omniroute.ai/v1/chat/completions"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 
 async def _call_omniroute(messages: list[dict], temperature: float, max_tokens: int) -> dict:
@@ -41,12 +41,15 @@ async def _call_omniroute(messages: list[dict], temperature: float, max_tokens: 
 async def _call_gemini(messages: list[dict], temperature: float, max_tokens: int) -> dict:
     if not settings.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY not configured")
+    # Use the configured model name in the URL
+    model = settings.llm_model or "gemini-2.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     # Turn chat messages into a Gemini prompt
     prompt = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages)
     params = {"key": settings.gemini_api_key}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(GEMINI_URL, params=params, json=payload)
+        resp = await client.post(url, params=params, json=payload)
         resp.raise_for_status()
         data = resp.json()
     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
