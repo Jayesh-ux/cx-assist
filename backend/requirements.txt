@@ -5,7 +5,10 @@ psycopg2-binary==2.9.9
 alembic==1.13.1
 pydantic==2.7.4
 pydantic-settings==2.3.4
-chromadb==0.4.25
+# ChromaDB is optional - the app auto-falls back to an in-memory fake when
+# the real HTTP client isn't available or can't build on this Python version.
+# Uncomment ONLY if you have Python 3.11 and real ChromaDB:
+# chromadb==0.4.25
 httpx==0.27.0
 python-multipart==0.0.9
 email-validator==2.1.1
