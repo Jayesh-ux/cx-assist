@@ -1,0 +1,102 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cx_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cxpass}
+      POSTGRES_DB: ${POSTGRES_DB:-cxassist}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cx} -d ${POSTGRES_DB:-cxassist}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  chromadb:
+    image: chromadb/chroma:0.4.24
+    container_name: cx_chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    ports:
+      - "8001:8000"
+    volumes:
+      - chromadata:/chroma/chroma
+
+  redis:
+    image: redis:7-alpine
+    container_name: cx_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cx_backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-cx}:${POSTGRES_PASSWORD:-cxpass}@db:5432/${POSTGRES_DB:-cxassist}
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    command: ["./docker-entrypoint.sh"]
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cx_worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-cx}:${POSTGRES_PASSWORD:-cxpass}@db:5432/${POSTGRES_DB:-cxassist}
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    command: ["worker"]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cx_frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  chromadata:
+  redisdata:
