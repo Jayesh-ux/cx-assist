@@ -20,7 +20,15 @@ from app.workers.jobs import worker_loop
 async def lifespan(app: FastAPI):
     """Startup: ensure tables/collections + start the background job worker."""
     from app.db import base  # noqa: F401  (ensure models are imported for metadata)
+    from app.db.base import Base
     logger.info("CX Assist starting up")
+    try:
+        # Fresh deployments (Render uses plain `uvicorn`, no Alembic run) rely
+        # on create_all to materialise the schema on first boot.
+        Base.metadata.create_all(bind=engine)
+        logger.info("create_all: tables ensured")
+    except Exception as e:  # noqa: BLE001  — keep serving /health even if DB is down
+        logger.error("create_all failed: %s", e)
     from app.services.vector_store import ensure_collection
 
     ensure_collection()
