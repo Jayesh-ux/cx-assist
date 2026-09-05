@@ -56,7 +56,8 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        return ["http://localhost:3000", "http://localhost:3001", "https://*.vercel.app"]
+        return ["http://localhost:3000", "http://localhost:3001",
+                "https://*.vercel.app", "https://cx-frontend.onrender.com"]
 
 
 @lru_cache
