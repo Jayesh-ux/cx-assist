@@ -22,23 +22,32 @@ async def lifespan(app: FastAPI):
     from app.db import base  # noqa: F401  (ensure models are imported for metadata)
     from app.db.base import Base
     logger.info("CX Assist starting up")
-    try:
-        # Fresh deployments (Render uses plain `uvicorn`, no Alembic run) rely
-        # on create_all to materialise the schema on first boot.
-        Base.metadata.create_all(bind=engine)
-        logger.info("create_all: tables ensured")
-    except Exception as e:  # noqa: BLE001  — keep serving /health even if DB is down
-        logger.error("create_all failed: %s", e)
-    from app.services.vector_store import ensure_collection
 
-    ensure_collection()
+    # Fresh deployments (Render uses plain `uvicorn`, no Alembic run) rely on
+    # create_all to materialise the schema on first boot. Run it in a background
+    # task so a slow-to-wake database (free-tier Postgres) never blocks boot.
+    async def ensure_schema():
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("create_all: tables ensured")
+        except Exception as e:  # noqa: BLE001  — keep serving /health even if DB is down
+            logger.error("create_all failed: %s", e)
+        try:
+            from app.services.vector_store import ensure_collection
+            ensure_collection()
+        except Exception as e:  # noqa: BLE001
+            logger.error("ensure_collection failed: %s", e)
+
+    schema_task = asyncio.create_task(ensure_schema())
     stop_event = asyncio.Event()
     worker_task = asyncio.create_task(worker_loop(stop_event))
     app.state.worker_stop = stop_event
     app.state.worker_task = worker_task
+    app.state.schema_task = schema_task
     yield
     stop_event.set()
     worker_task.cancel()
+    schema_task.cancel()
     logger.info("CX Assist shutting down")
     engine.dispose()
 
