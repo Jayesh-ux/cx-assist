@@ -103,3 +103,67 @@ def test_complete_uses_only_gemini_when_provider_gemini(monkeypatch):
     assert "gemini-2.5-flash" in str(captured["request"].url)
     assert "key=g123" in str(captured["request"].url)
     assert llm_service.last_provider() == "gemini"
+
+
+def test_complete_auto_uses_router_then_gemini_fallback(monkeypatch):
+    """LLM_PROVIDER=auto uses the router and falls back to Gemini when it fails."""
+
+    def handler(request):
+        if "generativelanguage.googleapis.com" in str(request.url):
+            return httpx.Response(
+                200,
+                json={"candidates": [{"content": {"parts": [{"text": "Gemini fallback text"}]}}]},
+                request=request,
+            )
+        return httpx.Response(503, request=request)
+
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", lambda *a, **k: _FakeClient(handler))
+    settings = llm_service.settings
+    old = (settings.llm_provider, settings.gemini_api_key, settings.omnipath_url, settings.omnipath_api_key, settings.llm_model)
+    try:
+        settings.llm_provider = "auto"
+        settings.gemini_api_key = "g123"
+        settings.omnipath_url = "http://router.local:20128/v1/chat/completions"
+        settings.omnipath_api_key = "k123"
+        settings.llm_model = ""
+        text = asyncio.run(complete([{"role": "user", "content": "hi"}]))
+    finally:
+        (settings.llm_provider, settings.gemini_api_key, settings.omnipath_url,
+         settings.omnipath_api_key, settings.llm_model) = old
+
+    assert text == "Gemini fallback text"
+    assert llm_service.last_provider() == "gemini"
+
+
+def test_complete_auto_prefers_router_when_both_work(monkeypatch):
+    """LLM_PROVIDER=auto uses the router result when both providers are healthy."""
+
+    def handler(request):
+        if "generativelanguage.googleapis.com" in str(request.url):
+            return httpx.Response(
+                200,
+                json={"candidates": [{"content": {"parts": [{"text": "Gemini"}]}}]},
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "Router text"}}], "usage": {"total_tokens": 5}},
+            request=request,
+        )
+
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", lambda *a, **k: _FakeClient(handler))
+    settings = llm_service.settings
+    old = (settings.llm_provider, settings.gemini_api_key, settings.omnipath_url, settings.omnipath_api_key, settings.llm_model)
+    try:
+        settings.llm_provider = "auto"
+        settings.gemini_api_key = "g123"
+        settings.omnipath_url = "http://router.local:20128/v1/chat/completions"
+        settings.omnipath_api_key = "k123"
+        settings.llm_model = ""
+        text = asyncio.run(complete([{"role": "user", "content": "hi"}]))
+    finally:
+        (settings.llm_provider, settings.gemini_api_key, settings.omnipath_url,
+         settings.omnipath_api_key, settings.llm_model) = old
+
+    assert text == "Router text"
+    assert llm_service.last_provider() == "omniroute"
