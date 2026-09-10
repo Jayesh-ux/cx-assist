@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -35,6 +37,7 @@ class ConversationCreate(BaseModel):
 class GenerateReply(BaseModel):
     brand_id: str
     customer_message: str = Field(min_length=1)
+    customer_email: str = ""  # optional: scope order lookup to a specific customer
 
 
 class ReviewDecision(BaseModel):
@@ -72,13 +75,17 @@ class UserCreate(BaseModel):
     email: str = Field(min_length=3)
     password: str = Field(min_length=6)
     full_name: str = ""
-    role: str = "agent"  # admin | agent
+    brand_id: str | None = None
+    # Role is ALWAYS "agent" on self-registration. Admin accounts are seeded
+    # via ADMIN_EMAIL/ADMIN_PASSWORD at startup — never client-supplied.
+    role: Literal["agent"] = "agent"
 
 
 class UserOut(BaseModel):
     id: str
     email: str
     full_name: str = ""
+    brand_id: str | None = None
     role: str = "agent"
     is_active: bool = True
 

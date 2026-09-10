@@ -11,6 +11,8 @@ the same API surface — used for dev, smoke tests, and Render's free tier.
 from __future__ import annotations
 
 import hashlib
+import re
+import uuid
 
 from app.core.config import settings
 from app.core.logging import logger
@@ -28,7 +30,10 @@ class _MemoryStore:
 
     def upsert(self, ids=None, embeddings=None, documents=None, metadatas=None):
         for i, doc in enumerate(documents or []):
-            self.docs[ids[i]] = {"text": doc, "meta": metadatas[i] if metadatas else {}}
+            self.docs[ids[i]] = {
+                "text": doc,
+                "meta": metadatas[i] if metadatas else {},
+            }
 
     def get(self, where=None):
         brand = (where or {}).get("brand")
@@ -124,7 +129,7 @@ def upsert_chunks(brand: str, chunks: list[str], source: str) -> int:
     if not chunks:
         return 0
     col = _collection()
-    ids = [_doc_id(brand, source, i) for i in range(len(chunks))]
+    ids = [f"{_doc_id(brand, source, i)}-{uuid.uuid4().hex[:12]}" for i in range(len(chunks))]
     metas = [{"brand": brand, "source": source, "idx": i} for i in range(len(chunks))]
     emb = embed_texts(chunks)
     col.upsert(ids=ids, embeddings=emb, documents=chunks, metadatas=metas)
@@ -151,10 +156,26 @@ def delete_all_for_brand(brand: str) -> None:
 
 
 def query(brand: str, query_text: str, top_k: int | None = None, score_threshold: float | None = None) -> list[dict]:
-    """Semantic search that is ALWAYS brand-scoped via the where clause."""
+    """BRAND-scoped search. Uses ChromaDB semantic search when available, or a
+    deterministic lexical (token-overlap) ranker in the in-memory fallback."""
+    global _use_real
     k = top_k or settings.top_k
     thr = score_threshold if score_threshold is not None else settings.score_threshold
     col = _collection()
+
+    if not _use_real:
+        res = col.get(where={"brand": brand})
+        docs = res.get("documents", [])
+        metas = res.get("metadatas", [])
+        ranked = sorted(zip(docs, metas), key=lambda t: _lexical_score(query_text, t[0]), reverse=True)
+        out = []
+        for doc, meta in ranked[:k]:
+            score = _lexical_score(query_text, doc)
+            if score >= thr:
+                out.append({"text": doc, "brand": meta.get("brand"),
+                            "source": meta.get("source"), "score": round(score, 4)})
+        return out
+
     q = embed_text(query_text)
     res = col.query(query_embeddings=[q], n_results=k, where={"brand": brand})
     out: list[dict] = []
@@ -170,3 +191,20 @@ def query(brand: str, query_text: str, top_k: int | None = None, score_threshold
 def _doc_id(brand: str, source: str, idx: int) -> str:
     raw = f"{brand}::{source}::{idx}"
     return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _lexical_score(query_text: str, doc_text: str) -> float:
+    """Deterministic token-overlap score used by the memory fallback store.
+
+    The fallback keeps ChromaDB's API surface but ranks candidates by lexical
+    overlap (BM25-style) because the local hash embedding is not a stable
+    cosine metric; ChromaDB itself is used when available."""
+    q = re.findall(r"[a-z0-9]+", query_text.lower())
+    d = re.findall(r"[a-z0-9]+", doc_text.lower())
+    if not q:
+        return 0.0
+    dc = {}
+    for t in d:
+        dc[t] = dc.get(t, 0) + 1
+    overlap = sum(min(1, dc.get(t, 0)) for t in q)
+    return round(overlap / len(q), 4)

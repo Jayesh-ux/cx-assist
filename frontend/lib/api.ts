@@ -1,5 +1,4 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-export const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_KEY ?? "change-me-to-a-long-random-secret";
 
 export type LoginUser = { id: string; email: string; full_name: string; role: string };
 export type LoginResponse = { access_token: string; token_type: string; expires_at: string; user: LoginUser };
@@ -26,6 +25,10 @@ export function getUser(): LoginUser | null {
   return _user;
 }
 
+export function isAdmin(): boolean {
+  return getUser()?.role === "admin";
+}
+
 export async function login(email: string, password: string): Promise<LoginUser> {
   const body = new URLSearchParams(); body.set("username", email); body.set("password", password);
   const res = await fetch(`${API_URL}/api/auth/login`, { method: "POST", body: body.toString() });
@@ -42,7 +45,6 @@ export async function api<T = any>(path: string, opts: RequestInit = {}): Promis
     "Content-Type": "application/json",
     ...(opts.headers as Record<string, string> | undefined),
   };
-  if (path.startsWith("/api/admin")) headers["X-Admin-Key"] = ADMIN_KEY;
   if (getToken()) headers["Authorization"] = `Bearer ${getToken()}`;
   const res = await fetch(`${API_URL}${path}`, { ...opts, headers });
   if (res.status === 401) { clearToken(); if (typeof window !== "undefined") window.location.href = "/login"; }

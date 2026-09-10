@@ -10,7 +10,7 @@ engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
     echo=False,
-    connect_args={"connect_timeout": 10},
+    connect_args={"connect_timeout": 10} if not settings.database_url.startswith("sqlite") else {},
 )
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

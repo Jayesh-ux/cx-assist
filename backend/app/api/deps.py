@@ -34,3 +34,13 @@ def require_agent(user: User = Depends(get_current_user)) -> User:
     if user.role not in ("admin", "agent"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Agent or admin access required")
     return user
+
+
+def can_access_brand(user: User, brand_id: str) -> bool:
+    """Admins operate across brands; agents are scoped to their assigned brand."""
+    return user.role == "admin" or (user.brand_id is not None and user.brand_id == brand_id)
+
+
+def scoped_brand_id(user: User) -> str | None:
+    """Brand filter to apply on list reads. None = no restriction (admin)."""
+    return None if user.role == "admin" else user.brand_id

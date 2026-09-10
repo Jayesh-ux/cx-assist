@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String
 
 from app.db.base_class import Base
 
@@ -24,6 +24,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(120), default="")
+    brand_id = Column(String(36), ForeignKey("brands.id"), nullable=True, index=True)  # agents scoped to one brand
     role = Column(String(16), default="agent")  # admin | agent
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=utcnow)
@@ -33,6 +34,7 @@ class User(Base):
             "id": self.id,
             "email": self.email,
             "full_name": self.full_name or "",
+            "brand_id": self.brand_id,
             "role": self.role,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,

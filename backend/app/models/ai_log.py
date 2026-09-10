@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 
 from app.db.base_class import Base
 
@@ -32,6 +32,14 @@ class AILog(Base):
     latency_ms = Column(Integer, default=0)
     token_usage = Column(Integer, default=0)
     status = Column(String(32), default="generated")
+    # Workflow telemetry (stateful generate pipeline)
+    node_history = Column(Text, default="[]")          # JSON list of executed workflow nodes
+    grading_results = Column(Text, default="[]")       # JSON list of chunk grading decisions
+    correction_attempts = Column(Integer, default=0)
+    escalation_reason = Column(Text, default="")
+    scraped_content_used = Column(Boolean, default=False)
+    validation_status = Column(String(32), default="")  # approved|escalated|deflected|greeting|human_review
+    confidence_score = Column(Float, default=0.0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict:
@@ -42,5 +50,12 @@ class AILog(Base):
             "retrieved_chunks": self.retrieved_chunks or "[]", "llm_response": self.llm_response or "",
             "edited_response": self.edited_response or "", "final_response": self.final_response or "",
             "confidence": self.confidence, "latency_ms": self.latency_ms, "token_usage": self.token_usage,
-            "status": self.status, "created_at": self.created_at.isoformat() if self.created_at else None,
+            "status": self.status, "node_history": self.node_history or "[]",
+            "grading_results": self.grading_results or "[]",
+            "correction_attempts": self.correction_attempts or 0,
+            "escalation_reason": self.escalation_reason or "",
+            "scraped_content_used": bool(self.scraped_content_used),
+            "validation_status": self.validation_status or "",
+            "confidence_score": self.confidence_score,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }

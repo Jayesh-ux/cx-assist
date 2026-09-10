@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import Link from "next/link";
+import { api, isAdmin } from "@/lib/api";
 
 type Stats = {
   brands: number;
@@ -14,11 +15,21 @@ type Stats = {
 };
 
 export default function DashboardPage() {
+  const admin = isAdmin();
   const { data, isLoading, error } = useQuery<Stats>({
     queryKey: ["stats"],
     queryFn: () => api("/api/admin/stats"),
+    enabled: admin,
   });
 
+  if (!admin) {
+    return (
+      <main className="card text-sm text-[#8b94a7]">
+        This dashboard is for admins.{" "}
+        <Link href="/login" className="text-[#6366f1]">Sign in</Link> to view stats.
+      </main>
+    );
+  }
   if (isLoading) return <div className="text-[#8b94a7]">Loading…</div>;
   if (error) return <div className="text-[#f87171]">Error loading stats: {String(error)}</div>;
 

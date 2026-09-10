@@ -20,21 +20,48 @@ human-in-the-loop review flow — not just a demo.
 
 ```
 Customer message
-  -> brand detect
-  -> brand isolation filter
-  -> semantic search (ChromaDB, brand-scoped)
-  -> context builder
-  -> STRICT prompt ("answer only from retrieved context, never hallucinate")
-  -> LLM (OmniRoute)
-  -> response validator
-  -> confidence check
-  -> human review: edit / approve / regenerate / manual
-  -> send
-  -> log
+  -> JWT auth (agent/admin, brand-scoped)
+  -> brand detect + cross-brand isolation gate (blocks, 403)
+  -> stateful workflow:
+        intent classify -> brand-scoped retrieve -> grade chunks
+        -> (scrape fallback when nothing in KB) -> generate (graded only)
+        -> validate -> self-correct (1 pass) -> escalate to human
+  -> human review: edit / approve / regenerate / manual -> send
+  -> log (full node_history + prompt + grading audit trail)
 ```
 
-Low-confidence or ungrounded replies **always** go to the human review queue; only
-high-confidence, grounded replies are eligible to auto-send.
+Low-confidence, ungrounded, or escalated replies **always** go to the human
+review queue; only grounded, validated high-confidence replies are auto-approved.
+
+## Security
+
+- Every business route requires a JWT (`/api/auth/login`); roles are `admin`
+  (bootstrap-seeded once via env) and `agent` (self-registration is forced to
+  `agent` — privilege escalation via registration is closed).
+- Reads are **brand-scoped end-to-end**; cross-brand access returns `403` and
+  is recorded in the audit log. No shared X-Admin-Key header exists anymore.
+- Web crawling is SSRF-hardened (HTTPS-only, domain-allowlisted from the
+  brand's own `website_url`, IP blocklist incl. link-local, no redirects) and
+  runs as an admin-only, rate-limited background job.
+- `SCORE_THRESHOLD` default lowered to `0.30` — the grading/validation layers
+  (not the raw retrieval score) drive auto-approval.
+- Login is rate-limited (10/min), admin crawl is rate-limited (5/min).
+
+## Workflow (stateful pipeline)
+
+Replaces the single "generate" call with a small stateful workflow. Every node
+is recorded in `node_history`, and the full prompt, grading, corrections and
+escalation reasons are persisted in `ai_logs` for the audit view.
+
+```
+intent_classifier -> document_retriever -> document_grader -> response_generator
+  -> response_validator -> self_correction? -> escalate?
+```
+
+Toggles (env): `WORKFLOW_GRADER_ENABLED`, `WORKFLOW_LLM_REVIEWER_ENABLED`,
+`WORKFLOW_SCRAPE_ENABLED`. No Redis? Scrape-fallback cooldowns fall back to an
+in-memory cache. No vector store configured (no Chroma)? The pipeline degrades
+to generation + validation against the existing legacy context builder.
 
 ## Tech stack
 

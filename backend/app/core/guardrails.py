@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from app.core.config import settings
+
 
 class ValidationCode(str, Enum):
     OK = "ok"
@@ -70,7 +72,7 @@ def finalize_reply(reply: str | None, confidence: float, has_context: bool) -> V
     if not has_context:
         return ValidationResult(False, ValidationCode.NO_CONTEXT, confidence, "no retrieved context available")
 
-    if confidence < 0.60:
+    if confidence < settings.confidence_threshold:
         return ValidationResult(False, ValidationCode.LOW_CONFIDENCE, confidence, "confidence below threshold - route to human review")
 
     return ValidationResult(True, ValidationCode.OK, confidence, "grounded in retrieved context")

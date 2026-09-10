@@ -7,6 +7,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.api.deps import can_access_brand, require_agent, scoped_brand_id
 from app.core.config import settings
 from app.core.guardrails import ValidationCode
 from app.core.logging import logger
@@ -15,6 +16,7 @@ from app.models.audit_log import AuditLog
 from app.models.brand import Brand
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.models.user import User
 from app.schemas.schemas import ManualReplyCreate, ReviewDecision
 from app.services import vector_store
 from app.services.llm_service import complete
@@ -39,10 +41,12 @@ def _conv_or_404(db: Session, conv_id: str) -> Conversation:
 
 
 @router.get("")
-def list_pending(db: Session = Depends(get_db)):
-    msgs = (db.query(Message).filter(Message.role == "agent",
-                                     Message.status.in_(["pending_review", "regenerated"]))
-            .order_by(Message.created_at.desc()).limit(100).all())
+def list_pending(db: Session = Depends(get_db), current_user: User = Depends(require_agent)):
+    q = db.query(Message).filter(Message.role == "agent",
+                                 Message.status.in_(["pending_review", "regenerated"]))
+    if scoped := scoped_brand_id(current_user):
+        q = q.filter(Message.brand_id == scoped)
+    msgs = q.order_by(Message.created_at.desc()).limit(100).all()
     out = []
     for m in msgs:
         brand = db.get(Brand, m.brand_id)
@@ -54,11 +58,13 @@ def list_pending(db: Session = Depends(get_db)):
 
 @router.post("/{message_id}/decide")
 async def decide(message_id: str, payload: ReviewDecision, request: Request,
-                 db: Session = Depends(get_db)):
+                 db: Session = Depends(get_db), current_user: User = Depends(require_agent)):
     record = _msg_or_404(db, message_id)
     brand = db.get(Brand, record.brand_id)
+    if not can_access_brand(current_user, record.brand_id):
+        raise HTTPException(403, "You do not have access to this brand")
     request_id = getattr(request.state, "request_id", "unknown")
-    db.add(AuditLog(actor_user_id="agent", entity_type="message", entity_id=record.id,
+    db.add(AuditLog(actor_user_id=current_user.id, entity_type="message", entity_id=record.id,
                     action=f"review_{payload.action}", detail=payload.human_note or "",
                     request_id=request_id))
 
@@ -115,8 +121,11 @@ async def decide(message_id: str, payload: ReviewDecision, request: Request,
 
 
 @router.post("/manual")
-def manual_reply(payload: ManualReplyCreate, db: Session = Depends(get_db)):
+def manual_reply(payload: ManualReplyCreate, db: Session = Depends(get_db),
+                 current_user: User = Depends(require_agent)):
     conv = _conv_or_404(db, payload.conversation_id)
+    if not can_access_brand(current_user, conv.brand_id):
+        raise HTTPException(403, "You do not have access to this brand")
     record = Message(
         conversation_id=conv.id,
         brand_id=payload.brand_id,

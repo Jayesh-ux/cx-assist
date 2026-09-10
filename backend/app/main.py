@@ -6,19 +6,26 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api import (admin, auth, brands, conversations, health, knowledge,
                      orders, replies, review, search)
+from app.core.bootstrap import bootstrap_admin, validate_secrets
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.rate_limit import limiter
 from app.core.request_id import RequestIDMiddleware
 from app.db.session import engine
 from app.workers.jobs import worker_loop
 
+validate_secrets()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: ensure tables/collections + start the background job worker."""
+    """Startup: ensure tables/collections, bootstrap admin, start the background worker."""
     from app.db import base  # noqa: F401  (ensure models are imported for metadata)
     from app.db.base import Base
     logger.info("CX Assist starting up")
@@ -37,6 +44,12 @@ async def lifespan(app: FastAPI):
             ensure_collection()
         except Exception as e:  # noqa: BLE001
             logger.error("ensure_collection failed: %s", e)
+        try:
+            from app.db.session import SessionLocal
+            with SessionLocal() as db:
+                bootstrap_admin(db)
+        except Exception as e:  # noqa: BLE001
+            logger.error("bootstrap_admin failed: %s", e)
 
     schema_task = asyncio.create_task(ensure_schema())
     stop_event = asyncio.Event()
@@ -54,11 +67,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CX Assist",
-    version="1.1.0",
+    version="1.2.0",
     description="Production-grade AI-powered CX reply assistant with strict no-hallucination guardrails.",
     lifespan=lifespan,
 )
 
+async def _rate_limit_handler(request, exc):
+    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Please slow down."})
+
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+
+
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,

@@ -6,6 +6,8 @@ and testable.
 """
 from __future__ import annotations
 
+import asyncio
+import random
 import time
 from typing import Callable, Awaitable
 
@@ -14,23 +16,56 @@ import httpx
 from app.core.config import settings
 from app.core.logging import logger
 
-OMNIPATH_URL = "https://omniroute.ai/v1/chat/completions"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+
+# Lightweight provider telemetry for callers that don't use on_complete
+# (single-process deployments only; safe for this app's footprint).
+_last_provider: str = ""
+
+
+def last_provider() -> str:
+    return _last_provider
+
+
+def _retryable(status: int) -> bool:
+    return status in (408, 429) or status >= 500
+
+
+async def _post_with_retry(client: httpx.AsyncClient, url: str, *, params=None, json=None, headers=None,
+                           attempts: int = 4) -> httpx.Response:
+    """POST with exponential backoff + jitter on transient (429/5xx) errors."""
+    for i in range(attempts):
+        try:
+            resp = await client.post(url, params=params, json=json, headers=headers)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+            logger.warning("llm request failed (%s); retrying %d/%d", exc, i + 1, attempts)
+            if i == attempts - 1:
+                raise
+            await asyncio.sleep(min(2 ** i, 8) + random.uniform(0, 0.5))
+            continue
+        if _retryable(resp.status_code) and i < attempts - 1:
+            wait = float(resp.headers.get("Retry-After", 0) or 0)
+            logger.warning("llm provider returned %s; backing off ~%.1fs before retry",
+                           resp.status_code, wait or 2 ** i)
+            await asyncio.sleep(wait or min(2 ** i, 8) + random.uniform(0, 0.5))
+            continue
+        return resp
+    return resp  # pragma: no cover - unreachable via the loop above
 
 
 async def _call_omniroute(messages: list[dict], temperature: float, max_tokens: int) -> dict:
-    if not settings.omnipath_api_key:
-        raise RuntimeError("OMNIPATH_API_KEY not configured")
+    headers = {}
+    if settings.omnipath_api_key:
+        headers["Authorization"] = f"Bearer {settings.omnipath_api_key}"
     payload = {
-        "model": settings.llm_model,
+        "model": settings.llm_model or "auto",
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": False,
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(OMNIPATH_URL, json=payload,
-                                 headers={"Authorization": f"Bearer {settings.omnipath_api_key}"})
+        resp = await _post_with_retry(client, settings.omnipath_url, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
     content = data["choices"][0]["message"]["content"].strip()
@@ -48,8 +83,8 @@ async def _call_gemini(messages: list[dict], temperature: float, max_tokens: int
     prompt = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages)
     params = {"key": settings.gemini_api_key}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, params=params, json=payload)
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await _post_with_retry(client, url, params=params, json=payload)
         resp.raise_for_status()
         data = resp.json()
     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -78,6 +113,8 @@ async def complete(messages: list[dict], temperature: float | None = None,
     for call in providers:
         try:
             result = await call(messages, temperature, max_tokens)
+            global _last_provider
+            _last_provider = result["provider"]
             meta = {
                 "provider": result["provider"],
                 "model": settings.llm_model,

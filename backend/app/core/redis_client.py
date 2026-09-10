@@ -75,13 +75,17 @@ def rate_limit_allowed(key: str, limit: int | None = None, window: int = 60) -> 
 
 
 async def enqueue_job(name: str, payload: dict) -> None:
-    """Push a job to the retry/queue list. Without Redis, run it inline."""
+    """Push a job to the retry/queue list. Without Redis, run it inline (best-effort)."""
     if _redis_available:
         _redis.rpush("cx:jobs", json.dumps({"name": name, "payload": payload, "ts": asyncio.get_event_loop().time()}))
     else:
-        # in-memory: process inline (best-effort)
-        from app.workers.jobs import dispatch
-        dispatch(name, payload)
+        # in-memory: process inline (best-effort). `_run_job` is the worker's
+        # actual executor, so behavior matches the Redis path when infra is down.
+        from app.workers.jobs import _run_job
+        try:
+            await _run_job(name, payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("inline job %s failed: %s", name, exc)
 
 
 def get_retry_key(queue: str) -> list[dict]:

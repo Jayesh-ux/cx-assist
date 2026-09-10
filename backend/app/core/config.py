@@ -23,10 +23,14 @@ class Settings(BaseSettings):
     embedding_dim: int = 1536
 
     # LLM (OmniRoute + Gemini fallback)
-    omnipath_api_key: str = ""
+    # omnipath_url is OpenAI-compatible; point it at a hosted/self-hosted router
+    # (e.g. OmniRoute at http://<host>:20128/v1/chat/completions). The legacy
+    # default is kept for backwards compat but does not resolve as of 2026.
+    omnipath_url: str = "https://omniroute.ai/v1/chat/completions"
+    omnipath_api_key: str = ""  # optional; omitted for keyless routers (REQUIRE_API_KEY=false)
     gemini_api_key: str = ""
     llm_provider: str = "auto"  # auto|omniroute|gemini
-    llm_model: str = "datastraw-reply-assistant"
+    llm_model: str = ""  # provider model; empty chooses provider default (OmniRoute: "auto", Gemini: "gemini-2.5-flash")
     temperature: float = 0.0
     max_tokens: int = 800
 
@@ -34,18 +38,28 @@ class Settings(BaseSettings):
     chunk_size: int = 900
     chunk_overlap: int = 120
     top_k: int = 5
-    score_threshold: float = 0.55
+    score_threshold: float = 0.30
     confidence_threshold: float = 0.60
 
-    # Admin auth
-    admin_api_key: str = "change-me"
-    access_token_expire_minutes: int = 480
+    # Workflow behaviour
+    workflow_grader_enabled: bool = True          # grade retrieved docs before generation
+    workflow_llm_reviewer_enabled: bool = False   # extra adversarial LLM pass (costs quota); guardrails always run
+    workflow_scrape_enabled: bool = True          # allow SSRF-hardened help-page scrape when KB has no relevant docs
+
+    # Auth — NO insecure defaults. If these are unset/missing at boot, startup
+    # refuses to run rather than silently shipping a "change-me" secret.
     secret_key: str = "change-me-to-a-long-random-secret"
+    access_token_expire_minutes: int = 480
+
+    # Bootstrap admin (seed once at startup when set)
+    admin_email: str = ""
+    admin_password: str = ""
+    admin_full_name: str = "Platform Admin"
 
     # Redis (cache + rate limiting + retry queue)
     redis_url: str = "redis://localhost:6379/0"
 
-    # Rate limiting (requests per minute per key)
+    # Fallback default for SlowAPI rules applied per-route (see main.py decorators)
     rate_limit_per_minute: int = 120
 
     # Webhook

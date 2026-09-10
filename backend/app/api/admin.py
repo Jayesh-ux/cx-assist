@@ -5,10 +5,11 @@ import json
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_admin
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.ai_log import AILog
@@ -17,28 +18,26 @@ from app.models.brand import Brand
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.order import Order
+from app.models.user import User
 
 logger = logging.getLogger("cxassist")
 router = APIRouter()
 
 
-def require_admin(x_admin_key: str = Header(default="", alias="X-Admin-Key")):
-    if not settings.admin_api_key or x_admin_key != settings.admin_api_key:
-        raise HTTPException(403, "Invalid admin key")
-    return True
-
-
-@router.get("/stats", dependencies=[Depends(require_admin)])
-def stats(db: Session = Depends(get_db)):
+@router.get("/stats")
+def stats(_: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     brands = db.query(Brand).count()
     conversations = db.query(Conversation).count()
     messages = db.query(Message).count()
     orders = db.query(Order).count()
-    by_status = {row[0]: row[1] for row in db.query(Message.status, func.count(Message.id))
-                 .group_by(Message.status).all()}
+    # Status metric counts AGENT turns only — customer turns are stored with
+    # status="sent" and are not "sent replies".
+    agent_msgs = db.query(Message).filter(Message.role == "agent")
+    by_status = {row[0]: row[1] for row in agent_msgs.group_by(Message.status).all()}
     by_provider = {row[0]: row[1] for row in db.query(AILog.provider, func.count(AILog.id))
                    .group_by(AILog.provider).all()}
-    avg_conf = db.query(func.avg(AILog.confidence)).scalar() or 0.0
+    # avg_confidence counts only generated/agent messages (drafts & sent alike).
+    avg_conf = db.query(func.avg(Message.confidence)).filter(Message.role == "agent").scalar() or 0.0
     return {
         "brands": brands,
         "conversations": conversations,
@@ -50,14 +49,14 @@ def stats(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/audit", dependencies=[Depends(require_admin)])
-def audit(limit: int = 100, db: Session = Depends(get_db)):
+@router.get("/audit")
+def audit(_: Request, admin: User = Depends(require_admin), limit: int = 100, db: Session = Depends(get_db)):
     rows = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).all()
     return [r.to_dict() for r in rows]
 
 
-@router.get("/logs", dependencies=[Depends(require_admin)])
-def llm_logs(limit: int = 100, db: Session = Depends(get_db)):
+@router.get("/logs")
+def llm_logs(_: Request, admin: User = Depends(require_admin), limit: int = 100, db: Session = Depends(get_db)):
     rows = db.query(AILog).order_by(AILog.created_at.desc()).limit(limit).all()
     return [r.to_dict() for r in rows]
 
