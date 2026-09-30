@@ -31,7 +31,9 @@ export function isAdmin(): boolean {
 
 export async function login(email: string, password: string): Promise<LoginUser> {
   const body = new URLSearchParams(); body.set("username", email); body.set("password", password);
-  const res = await fetch(`${API_URL}/api/auth/login`, { method: "POST", body: body.toString() });
+  // Pass the URLSearchParams object (not .toString()) so the browser sets
+  // Content-Type: application/x-www-form-urlencoded for FastAPI OAuth2 forms.
+  const res = await fetch(`${API_URL}/api/auth/login`, { method: "POST", body });
   if (!res.ok) throw new Error(`${res.status}: ${(await res.text()) || "login failed"}`);
   const data = (await res.json()) as LoginResponse;
   setToken(data.access_token);
